@@ -1,10 +1,33 @@
 'use client';
 
 import { useChat } from '@ai-sdk/react';
-import { useState } from 'react';
+import { useRef, useState, useEffect } from 'react';
 
 export default function Chat() {
+  const sessionId = useRef(crypto.randomUUID()).current;
   const [input, setInput] = useState('');
+
+  useEffect(() => {
+  const originalFetch = window.fetch;
+  window.fetch = async (input, init) => {
+    console.log('fetch intercepted:', input);
+    console.log('body:', init?.body);
+
+    if (typeof input === 'string' && input.includes('/api/chat') && init?.body) {
+      const body = JSON.parse(init.body as string);
+      console.log('injecting sessionId:', sessionId);
+      return originalFetch(input, {
+        ...init,
+        body: JSON.stringify({ ...body, sessionId }),
+      });
+    }
+    return originalFetch(input, init);
+  };
+  return () => {
+    window.fetch = originalFetch;
+  };
+}, [sessionId]);
+
   const { messages, sendMessage } = useChat();
 
   return (
@@ -14,7 +37,6 @@ export default function Chat() {
       {messages.map(message => (
         <div key={message.id} className="whitespace-pre-wrap">
           {message.role === 'user' ? 'User: ' : 'AI: '}
-
           {message.parts.map((part, i) => {
             switch (part.type) {
               case 'text':
@@ -38,7 +60,6 @@ export default function Chat() {
           value={input}
           placeholder="Ketik pesanmu di sini..."
           onChange={e => setInput(e.currentTarget.value)}
-
         />
       </form>
     </div>
