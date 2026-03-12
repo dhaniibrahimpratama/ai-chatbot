@@ -2,6 +2,7 @@
 
 import { useChat } from '@ai-sdk/react';
 import { useRef, useState, useEffect, useCallback } from 'react';
+import MarkdownRenderer from '@/components/MarkdownRenderer';
 
 type DBMessage = {
   id: string;
@@ -23,6 +24,7 @@ export default function Chat() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [historyMessages, setHistoryMessages] = useState<DBMessage[] | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const originalFetch = window.fetch;
@@ -39,7 +41,8 @@ export default function Chat() {
     return () => { window.fetch = originalFetch; };
   }, [currentSessionId]);
 
-  const { messages, setMessages, sendMessage } = useChat();
+  const { messages, setMessages, sendMessage, status } = useChat();
+  const isLoading = status === 'streaming' || status === 'submitted';
 
   const fetchSessions = useCallback(async () => {
     const res = await fetch('/api/sessions');
@@ -57,6 +60,10 @@ export default function Chat() {
       fetchSessions();
     }
   }, [messages, fetchSessions]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, historyMessages]);
 
   async function loadSession(id: string) {
     setActiveSessionId(id);
@@ -131,7 +138,7 @@ export default function Chat() {
                   <p className="text-xs font-semibold mb-1 opacity-70">
                     {msg.role === 'user' ? 'Kamu' : 'MagangBot'}
                   </p>
-                  <p className="whitespace-pre-wrap">{msg.content}</p>
+                  <MarkdownRenderer content={msg.content} />
                 </div>
               </div>
             ))
@@ -147,7 +154,7 @@ export default function Chat() {
                   {message.parts.map((part, i) => {
                     switch (part.type) {
                       case 'text':
-                        return <p key={i} className="whitespace-pre-wrap">{part.text}</p>;
+                        return <MarkdownRenderer key={i} content={part.text} />;
                       default:
                         return null;
                     }
@@ -156,6 +163,7 @@ export default function Chat() {
               </div>
             ))
           )}
+          <div ref={messagesEndRef} />
         </div>
 
         {/* Input area */}
@@ -171,16 +179,18 @@ export default function Chat() {
               className="flex gap-2"
             >
               <input
-                className="flex-1 bg-zinc-900 border border-zinc-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-zinc-500"
+                className="flex-1 bg-zinc-900 border border-zinc-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-zinc-500 disabled:opacity-50"
                 value={input}
-                placeholder="Ketik pesanmu di sini..."
+                placeholder={isLoading ? 'MagangBot sedang mengetik...' : 'Ketik pesanmu di sini...'}
                 onChange={e => setInput(e.currentTarget.value)}
+                disabled={isLoading}
               />
               <button
                 type="submit"
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm font-medium"
+                disabled={isLoading}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Kirim
+                {isLoading ? '...' : 'Kirim'}
               </button>
             </form>
           </div>
