@@ -1,4 +1,4 @@
-import { streamText, convertToModelMessages } from 'ai';
+import { streamText, convertToModelMessages, generateText } from 'ai';
 import { createGroq } from '@ai-sdk/groq';
 import { prisma } from '@/lib/prisma';
 
@@ -21,18 +21,42 @@ export async function POST(req: Request) {
   }
 
   if (!session) {
-  session = await prisma.chatSession.create({
-    data: {
-      id: sessionId,
-      title: "Obrolan MagangBot",
-    },
-  });
-}
+    const firstMessage = messages[0];
+    let firstMessageText = '';
 
-const lastUserMessage = messages[messages.length - 1];
+    if (Array.isArray(firstMessage.parts)) {
+      firstMessageText = firstMessage.parts
+        .filter((p: any) => p.type === 'text')
+        .map((p: any) => p.text)
+        .join('');
+    } else if (typeof firstMessage.content === 'string') {
+      firstMessageText = firstMessage.content;
+    } else {
+      firstMessageText = 'Obrolan MagangBot';
+    }
 
-let userContent = '';
+    let title = firstMessageText.slice(0, 40);
+    try {
+      const titleResult = await generateText({
+        model: groq('llama-3.3-70b-versatile'),
+        prompt: `Buat judul singkat (maksimal 5 kata) dalam Bahasa Indonesia untuk percakapan yang dimulai dengan pesan ini: "${firstMessageText}". Balas HANYA dengan judulnya saja, tanpa tanda kutip, tanpa penjelasan tambahan.`,
+      });
+      title = titleResult.text.trim();
+    } catch (e) {
+      console.error('Failed to generate title:', e);
+    }
 
+    session = await prisma.chatSession.create({
+      data: {
+        id: sessionId,
+        title: title,
+      },
+    });
+  }
+
+  const lastUserMessage = messages[messages.length - 1];
+
+  let userContent = '';
   if (Array.isArray(lastUserMessage.parts)) {
     userContent = lastUserMessage.parts
       .filter((part: any) => part.type === 'text')
@@ -75,7 +99,7 @@ let userContent = '';
 
   return result.toUIMessageStreamResponse({
     headers: {
-    'X-Session-Id': session.id,
+      'X-Session-Id': session.id,
     },
   });
 }
