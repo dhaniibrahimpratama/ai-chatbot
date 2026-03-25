@@ -34,6 +34,8 @@ export default function Chat() {
   const [historyMessages, setHistoryMessages] = useState<DBMessage[] | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState('');
 
   useEffect(() => {
     const originalFetch = window.fetch;
@@ -72,9 +74,18 @@ export default function Chat() {
 
   async function loadSession(id: string) {
     setActiveSessionId(id);
+    setCurrentSessionId(id); 
+
     const res = await fetch(`/api/messages?sessionId=${id}`);
     const data = await res.json();
-    setHistoryMessages(data);
+    const formattedMessages = data.map((msg: any) => ({
+      id: msg.id,
+      role: msg.role,
+      content: msg.content,
+      parts: [{ type: 'text', text: msg.content }] 
+    }));
+    setMessages(formattedMessages as any);
+    setHistoryMessages(null); 
   }
 
   function newChat() {
@@ -82,6 +93,28 @@ export default function Chat() {
     setHistoryMessages(null);
     setMessages([]);
     setCurrentSessionId(crypto.randomUUID());
+  }
+
+  async function deleteSession(id: string) {
+  await fetch('/api/sessions', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id }),
+  });
+  if (activeSessionId === id) newChat();
+  fetchSessions();
+  }
+
+  async function renameSession(id: string) {
+  if (!editingTitle.trim()) return;
+  await fetch('/api/sessions', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, title: editingTitle }),
+  });
+  setEditingId(null);
+  setEditingTitle('');
+  fetchSessions();
   }
 
   return (
@@ -106,25 +139,102 @@ export default function Chat() {
             Riwayat Obrolan
           </p>
           {sessions.map(session => (
-            <button
+            <div
               key={session.id}
-              onClick={() => loadSession(session.id)}
-              title={session.title}
-              aria-label={`Buka: ${session.title}`}
-              className={`w-full text-left px-3 py-2.5 rounded-xl text-sm mb-0.5 transition-all ${
-                activeSessionId === session.id
-                  ? 'bg-white/10 text-[#ececec]'
-                  : 'text-[#777] hover:bg-white/5 hover:text-[#ececec]'
+              className={`group relative flex items-center rounded-xl mb-0.5 transition-all ${
+                activeSessionId === session.id ? 'bg-white/10' : 'hover:bg-white/5'
               }`}
             >
-              <div className="truncate font-medium text-[13px]">{session.title}</div>
-              <div className="text-[11px] text-[#444] mt-0.5">
-                {new Date(session.createdAt).toLocaleDateString('id-ID', {
-                  day: 'numeric', month: 'short',
-                  hour: '2-digit', minute: '2-digit',
-                })}
-              </div>
-            </button>
+              {editingId === session.id ? (
+                <div className="flex-1 flex items-center gap-1 px-2 py-1.5">
+                  <input
+                    autoFocus
+                    value={editingTitle}
+                    onChange={e => setEditingTitle(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') renameSession(session.id);
+                      if (e.key === 'Escape') setEditingId(null);
+                    }}
+                    className="flex-1 bg-white/10 text-[#ececec] text-[13px] px-2 py-1 rounded-lg focus:outline-none border border-violet-500/40"
+                    aria-label="Edit judul obrolan" 
+                    title="Edit judul obrolan"
+                  />
+                  <button
+                    onClick={() => renameSession(session.id)}
+                    title="Simpan"
+                    aria-label="Simpan judul"
+                    className="p-1 hover:text-violet-400 transition-colors text-[#777]"
+                  >
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <polyline points="20 6 9 17 4 12"/>
+                    </svg>
+                  </button>
+                  <button
+                    onClick={() => setEditingId(null)}
+                    title="Batal"
+                    aria-label="Batal rename"
+                    className="p-1 hover:text-red-400 transition-colors text-[#777]"
+                  >
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <line x1="18" y1="6" x2="6" y2="18"/>
+                      <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <button
+                    onClick={() => loadSession(session.id)}
+                    title={session.title}
+                    aria-label={`Buka: ${session.title}`}
+                    className="flex-1 text-left px-3 py-2.5 text-sm min-w-0 pr-14"
+                  >
+                    <div className={`truncate font-medium text-[13px] ${
+                      activeSessionId === session.id ? 'text-[#ececec]' : 'text-[#777] group-hover:text-[#ececec]'
+                    }`}>
+                      {session.title}
+                    </div>
+                    <div className="text-[11px] text-[#444] mt-0.5">
+                      {new Date(session.createdAt).toLocaleDateString('id-ID', {
+                        day: 'numeric', month: 'short',
+                        hour: '2-digit', minute: '2-digit',
+                      })}
+                    </div>
+                  </button>
+
+                  {/* Action buttons */}
+                  <div className="absolute right-2 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-0.5">
+                    <button
+                      onClick={() => {
+                        setEditingId(session.id);
+                        setEditingTitle(session.title);
+                      }}
+                      title="Rename"
+                      aria-label="Rename sesi"
+                      className="p-1.5 hover:bg-white/10 rounded-lg transition-colors text-[#555] hover:text-[#ececec]"
+                    >
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                      </svg>
+                    </button>
+                    <button
+                      onClick={() => deleteSession(session.id)}
+                      title="Hapus"
+                      aria-label="Hapus sesi"
+                      className="p-1.5 hover:bg-red-500/10 rounded-lg transition-colors text-[#555] hover:text-red-400"
+                    >
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <polyline points="3 6 5 6 21 6"/>
+                        <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                        <path d="M10 11v6M14 11v6"/>
+                        <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                      </svg>
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
           ))}
         </div>
       </div>
