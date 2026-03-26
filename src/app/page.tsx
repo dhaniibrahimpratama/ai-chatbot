@@ -118,11 +118,19 @@ export default function Chat() {
   }
 
   return (
-    <div className="flex h-screen bg-[#0f0f10] text-[#ececec]">
+    <div className="flex h-screen bg-[#0f0f10] text-[#ececec] relative overflow-hidden">
 
+      {sidebarOpen && (
+        <div 
+          className="md:hidden fixed inset-0 bg-black/60 backdrop-blur-sm z-40 transition-opacity"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+    
       {/* Sidebar */}
-      <div className={`${sidebarOpen ? 'w-64' : 'w-0'} flex-shrink-0 flex flex-col transition-all duration-300 overflow-hidden bg-[#161617] border-r border-white/5`}>
-
+      <div className={`${sidebarOpen ? 'w-72 md:w-64 translate-x-0' : 'w-0 -translate-x-full md:translate-x-0 md:w-0'} 
+        absolute md:relative z-50 h-full flex-shrink-0 flex flex-col transition-all duration-300 overflow-hidden bg-[#161617] border-r border-white/5`}
+      >
         <div className="p-3 border-b border-white/5">
           <button
             onClick={newChat}
@@ -240,10 +248,11 @@ export default function Chat() {
       </div>
 
       {/* Main Chat Area */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 relative">
+        <div className="absolute top-[-150px] left-1/2 -translate-x-1/2 w-[500px] h-[250px] bg-violet-500/10 blur-[130px] rounded-full pointer-events-none z-0 transition-all duration-300" />
 
         {/* Header */}
-        <div className="px-4 py-3 border-b border-white/5 flex items-center gap-3">
+        <div className="px-4 py-3 border-b border-white/5 flex items-center gap-3 relative z-10">
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
             title={sidebarOpen ? 'Tutup sidebar' : 'Buka sidebar'}
@@ -265,7 +274,7 @@ export default function Chat() {
 
           {/* Welcome screen */}
           {messages.length === 0 && !historyMessages && (
-            <div className="flex flex-col items-center justify-center h-full text-center px-6 pb-10">
+            <div className="animate-slide-up flex flex-col items-center justify-center h-full text-center px-6 pb-10">
               <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center mb-6 shadow-xl shadow-violet-900/30">
                 <svg width="28" height="28" viewBox="0 0 24 24" fill="white">
                   <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/>
@@ -312,7 +321,7 @@ export default function Chat() {
             ))
           ) : (
             messages.map(message => (
-              <div key={message.id} className={`flex gap-3 ${message.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
+              <div key={message.id} className={`animate-slide-up flex gap-3 ${message.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
                 <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold flex-shrink-0 mt-0.5 ${
                   message.role === 'user'
                     ? 'bg-white/10 border border-white/10 text-[#aaa]'
@@ -340,10 +349,7 @@ export default function Chat() {
 
           {/* Typing indicator */}
           {isLoading && (
-            <div className="flex gap-3">
-              <div className="w-7 h-7 rounded-full bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center text-[11px] font-bold text-white flex-shrink-0">
-                M
-              </div>
+            <div className="animate-slide-up flex gap-3 pl-[40px]">
               <div className="flex items-center gap-1.5 px-4 py-3">
                 <span className="w-1.5 h-1.5 bg-[#555] rounded-full animate-bounce [animation-delay:0ms]" />
                 <span className="w-1.5 h-1.5 bg-[#555] rounded-full animate-bounce [animation-delay:150ms]" />
@@ -365,7 +371,7 @@ export default function Chat() {
                 sendMessage({ text: input });
                 setInput('');
               }}
-              className="flex gap-2 bg-[#1a1a1b] border border-white/8 rounded-2xl px-4 py-3 focus-within:border-violet-500/40 transition-colors"
+              className="flex gap-2 bg-white/5 backdrop-blur-md shadow-2xl border border-white/10 rounded-2xl px-4 py-3 focus-within:border-violet-500/50 transition-all z-10 relative"
             >
               <input
                 className="flex-1 bg-transparent text-sm text-[#ececec] placeholder-[#444] focus:outline-none disabled:opacity-40"
@@ -389,6 +395,11 @@ export default function Chat() {
             </form>
             <p className="text-[11px] text-[#333] text-center mt-2">
               Enter kirim · Shift+Enter baris baru
+              {input.length > 0 && (
+                <span className={`ml-3 ${input.length > 800 ? 'text-red-500' : 'text-[#444]'}`}>
+                  {input.length} karakter
+                </span>
+              )}
             </p>
           </div>
         ) : (
