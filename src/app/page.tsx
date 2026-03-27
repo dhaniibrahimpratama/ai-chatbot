@@ -65,9 +65,11 @@ export default function Chat() {
   useEffect(() => { fetchSessions(); }, [fetchSessions]);
 
   useEffect(() => {
-    const lastMessage = messages[messages.length - 1];
-    if (lastMessage?.role === 'assistant') fetchSessions();
-  }, [messages, fetchSessions]);
+    if (status === 'ready') {
+      const lastMessage = messages[messages.length - 1];
+      if (lastMessage?.role === 'assistant') fetchSessions();
+    }
+  }, [status, fetchSessions, messages]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
