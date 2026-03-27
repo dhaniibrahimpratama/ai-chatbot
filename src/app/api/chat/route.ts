@@ -1,6 +1,7 @@
 import { streamText, convertToModelMessages, generateText } from 'ai';
 import { createGroq } from '@ai-sdk/groq';
 import { prisma } from '@/lib/prisma';
+import { createClient } from '@/utils/supabase/server';
 
 export const runtime = 'nodejs';
 
@@ -9,6 +10,23 @@ const groq = createGroq({
 });
 
 export async function POST(req: Request) {
+
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+
+  if (!user) {
+    return new Response('Unauthorized', { status: 401 });
+  }
+
+  await prisma.user.upsert({
+    where: { id: user.id },
+    update: {}, 
+    create: {
+      id: user.id,
+      email: user.email ?? 'tanpa-email@magang.com',
+    }
+  });
+
   const { messages, sessionId } = await req.json();
   console.log('Received sessionId:', sessionId);
 
@@ -18,6 +36,10 @@ export async function POST(req: Request) {
     session = await prisma.chatSession.findUnique({
       where: { id: sessionId },
     });
+  }
+
+  if (session && session.userId !== user.id) {
+    return new Response('Forbidden', { status: 403 });
   }
 
   if (!session) {
@@ -50,6 +72,7 @@ export async function POST(req: Request) {
       data: {
         id: sessionId,
         title: title,
+        userId: user.id,
       },
     });
   }
