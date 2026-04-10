@@ -6,12 +6,14 @@
 
 generator client {
   provider = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
+  extensions = [vector]
 }
 
 model User {
@@ -40,4 +42,14 @@ model Message {
   
   sessionId String
   session   ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+}
+
+model Document {
+  id        String   @id @default(cuid())
+  content   String   @db.Text // Tempat nyimpen teks asli (potongan kalimat/kode)
+  metadata  Json?    // Tempat nyimpen info file (misal: nama file, halaman, author)
+  embedding Unsupported("vector(1024)")? // Tempat nyimpen angka vektor dari Voyage
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
