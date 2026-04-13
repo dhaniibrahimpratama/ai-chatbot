@@ -112,19 +112,17 @@ export async function POST(req: Request) {
 
   let contextText = "";
   try {
-    console.log("🔍 Menerjemahkan pertanyaan ke vektor...");
+    console.log("Menerjemahkan pertanyaan ke vektor...");
     const embeddingArray = await getVoyageEmbedding(userContent);
     const embeddingString = `[${embeddingArray.join(',')}]`;
 
     console.log("Mencari dokumen yang relevan di Supabase...");
-    
-    // CATATAN: Ini query global. Kalau mau diubah jadi mode personal per-user, 
-    // tinggal hapus tanda -- di baris 'AND "userId" = ...'
+
     const matchedDocs = await prisma.$queryRaw<any[]>`
       SELECT content, 1 - (embedding <=> ${embeddingString}::vector) as similarity
       FROM "Document"
       WHERE 1=1
-      -- AND "userId" = ${user.id} 
+      AND "userId" = ${user.id} 
       ORDER BY similarity DESC
       LIMIT 3;
     `;

@@ -46,6 +46,7 @@ model Message {
 
 model Document {
   id        String   @id @default(cuid())
+  userId    String?
   content   String   @db.Text
   metadata  Json?
   embedding Unsupported("vector(1024)")?
