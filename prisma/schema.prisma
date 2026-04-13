@@ -46,9 +46,9 @@ model Message {
 
 model Document {
   id        String   @id @default(cuid())
-  content   String   @db.Text // Tempat nyimpen teks asli (potongan kalimat/kode)
-  metadata  Json?    // Tempat nyimpen info file (misal: nama file, halaman, author)
-  embedding Unsupported("vector(1024)")? // Tempat nyimpen angka vektor dari Voyage
+  content   String   @db.Text
+  metadata  Json?
+  embedding Unsupported("vector(1024)")?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

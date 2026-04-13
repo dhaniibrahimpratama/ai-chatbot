@@ -2,6 +2,7 @@ import { streamText, convertToModelMessages, generateText } from 'ai';
 import { createGroq } from '@ai-sdk/groq';
 import { prisma } from '@/lib/prisma';
 import { createClient } from '@/utils/supabase/server';
+import { getVoyageEmbedding } from '@/lib/rag-utils';
 
 export const runtime = 'nodejs';
 
@@ -109,9 +110,44 @@ export async function POST(req: Request) {
     data: { createdAt: new Date() },
   });
 
+  let contextText = "";
+  try {
+    console.log("🔍 Menerjemahkan pertanyaan ke vektor...");
+    const embeddingArray = await getVoyageEmbedding(userContent);
+    const embeddingString = `[${embeddingArray.join(',')}]`;
+
+    console.log("Mencari dokumen yang relevan di Supabase...");
+    
+    // CATATAN: Ini query Global. Kalau mau diubah jadi mode Personal per-user, 
+    // tinggal hapus tanda komentar di baris 'AND "userId" = ...' di bawah ini.
+    // (Sementara aku biarkan Global supaya dokumen SOP Cuti yang kemarin tetap terbaca).
+    const matchedDocs = await prisma.$queryRaw<any[]>`
+      SELECT content, 1 - (embedding <=> ${embeddingString}::vector) as similarity
+      FROM "Document"
+      WHERE 1=1
+      -- AND "userId" = ${user.id} 
+      ORDER BY similarity DESC
+      LIMIT 3;
+    `;
+
+    contextText = matchedDocs.map(doc => doc.content).join('\n\n');
+    console.log("✅ Konteks berhasil ditarik!");
+  } catch (err) {
+    console.error("Gagal menarik konteks RAG:", err);
+  }
+
+  const systemPrompt = `Kamu adalah asisten AI yang bernama MagangBot yang diciptakan oleh Dhani. MagangBot adalah asisten AI yang cerdas, ramah, dan membantu yang selalu menjawab dalam Bahasa Indonesia dengan jelas dan mudah dipahami; berikan jawaban yang terstruktur dan informatif namun tetap ringkas, jelaskan langkah demi langkah jika topik kompleks, gunakan contoh bila perlu, fokus membantu pengguna memahami informasi atau menyelesaikan masalah, jangan mengarang fakta dan katakan jika tidak yakin, serta minta klarifikasi jika pertanyaan pengguna kurang jelas.
+
+  PENTING - ATURAN MENJAWAB:
+  Kamu telah diberikan KONTEKS DOKUMEN di bawah ini. Gunakan HANYA informasi dari konteks tersebut untuk menjawab pertanyaan user. 
+  Jika jawabannya tidak ada di dalam konteks, katakan dengan jujur "Maaf, saya tidak memiliki informasi mengenai hal tersebut di dalam basis data dokumen saya," dan JANGAN mengarang fakta.
+
+  KONTEKS DOKUMEN:
+  ${contextText}`;
+
   const result = streamText({
     model: groq('llama-3.3-70b-versatile'),
-    system: 'Kamu adalah asisten AI yang bernama MagangBot yang diciptakan oleh Dhani. MagangBot adalah asisten AI yang cerdas, ramah, dan membantu yang selalu menjawab dalam Bahasa Indonesia dengan jelas dan mudah dipahami; berikan jawaban yang terstruktur dan informatif namun tetap ringkas, jelaskan langkah demi langkah jika topik kompleks, gunakan contoh bila perlu, fokus membantu pengguna memahami informasi atau menyelesaikan masalah, jangan mengarang fakta dan katakan jika tidak yakin, serta minta klarifikasi jika pertanyaan pengguna kurang jelas.',
+    system: systemPrompt,
     messages: await convertToModelMessages(messages),
 
     async onFinish({ text }) {
