@@ -118,9 +118,8 @@ export async function POST(req: Request) {
 
     console.log("Mencari dokumen yang relevan di Supabase...");
     
-    // CATATAN: Ini query Global. Kalau mau diubah jadi mode Personal per-user, 
-    // tinggal hapus tanda komentar di baris 'AND "userId" = ...' di bawah ini.
-    // (Sementara aku biarkan Global supaya dokumen SOP Cuti yang kemarin tetap terbaca).
+    // CATATAN: Ini query global. Kalau mau diubah jadi mode personal per-user, 
+    // tinggal hapus tanda -- di baris 'AND "userId" = ...'
     const matchedDocs = await prisma.$queryRaw<any[]>`
       SELECT content, 1 - (embedding <=> ${embeddingString}::vector) as similarity
       FROM "Document"
