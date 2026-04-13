@@ -33,13 +33,14 @@ export async function POST(req: Request) {
       const embeddingString = `[${embeddingArray.join(',')}]`;
 
       await prisma.$executeRaw`
-        INSERT INTO "Document" (id, "userId", content, metadata, embedding, "updatedAt")
+        INSERT INTO "Document" (id, "userId", content, metadata, embedding, "isActive", "updatedAt")
         VALUES (
           gen_random_uuid()::text, 
           ${user.id}, 
           ${chunk}, 
           ${JSON.stringify({ filename: filename || 'Dokumen_Tanpa_Nama' })}::jsonb, 
-          ${embeddingString}::vector, 
+          ${embeddingString}::vector,
+          true, 
           now()
         )
       `;

@@ -50,6 +50,7 @@ model Document {
   content   String   @db.Text
   metadata  Json?
   embedding Unsupported("vector(1024)")?
+  isActive  Boolean  @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

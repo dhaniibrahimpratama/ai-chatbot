@@ -34,8 +34,9 @@ export async function getVoyageEmbedding(text: string): Promise<number[]> {
   });
 
   if (!response.ok) {
-    const errorData = await response.json();
-    throw new Error(`Gagal memanggil Voyage AI: ${errorData.message}`);
+    const errorText = await response.text(); 
+      console.error("🚨 Detail Error Voyage AI:", errorText);
+      throw new Error(`Gagal memanggil Voyage AI. Cek terminal untuk detailnya.`);
   }
 
   const data = await response.json();

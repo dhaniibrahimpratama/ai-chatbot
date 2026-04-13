@@ -122,7 +122,8 @@ export async function POST(req: Request) {
       SELECT content, 1 - (embedding <=> ${embeddingString}::vector) as similarity
       FROM "Document"
       WHERE 1=1
-      AND "userId" = ${user.id} 
+      AND "userId" = ${user.id}
+      AND "isActive" = true 
       ORDER BY similarity DESC
       LIMIT 3;
     `;
