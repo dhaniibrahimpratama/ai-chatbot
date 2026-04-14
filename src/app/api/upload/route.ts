@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '@/lib/prisma';
 import { chunkText, getVoyageEmbedding } from '@/lib/rag-utils';
 import { createClient } from '@/utils/supabase/server';
+import { extractText } from 'unpdf';
 
-const prisma = new PrismaClient();
+export const runtime = 'nodejs';
 
 export async function POST(req: Request) {
   try {
@@ -14,12 +15,49 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const body = await req.json();
-    const { text, filename } = body;
+    const contentType = req.headers.get('content-type') || '';
+    let text = '';
+    let filename = '';
 
-    if (!text) {
+    if (contentType.includes('multipart/form-data')) {
+      const formData = await req.formData();
+      const file = formData.get('file') as File | null;
+      filename = (formData.get('filename') as string) || '';
+
+      if (!file) {
+        return NextResponse.json(
+          { error: "File tidak boleh kosong" },
+          { status: 400 }
+        );
+      }
+
+      const fileExtension = file.name.split('.').pop()?.toLowerCase();
+
+      if (fileExtension === 'txt') {
+        text = await file.text();
+      } else if (fileExtension === 'pdf') {
+        const arrayBuffer = await file.arrayBuffer();
+        const pdfResult = await extractText(arrayBuffer);
+        text = pdfResult.text.join('\n');
+      } else {
+        return NextResponse.json(
+          { error: "Format file tidak didukung. Hanya .txt dan .pdf yang diizinkan." },
+          { status: 400 }
+        );
+      }
+
+      if (!filename) {
+        filename = file.name.replace(/\.[^/.]+$/, '');
+      }
+    } else {
+      const body = await req.json();
+      text = body.text;
+      filename = body.filename;
+    }
+
+    if (!text || !text.trim()) {
       return NextResponse.json(
-        { error: "Teks dokumen tidak boleh kosong" }, 
+        { error: "Teks dokumen tidak boleh kosong (file mungkin kosong atau tidak dapat dibaca)" },
         { status: 400 }
       );
     }
@@ -29,7 +67,7 @@ export async function POST(req: Request) {
 
     for (const chunk of chunks) {
       const embeddingArray = await getVoyageEmbedding(chunk);
-      
+
       const embeddingString = `[${embeddingArray.join(',')}]`;
 
       await prisma.$executeRaw`
@@ -49,13 +87,14 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       success: true,
-      chunksSaved: savedCount
+      chunksSaved: savedCount,
+      filename: filename,
     });
 
   } catch (error: any) {
     console.error("Error di Upload Pipeline:", error);
     return NextResponse.json(
-      { error: "Gagal memproses dokumen internal" }, 
+      { error: "Gagal memproses dokumen: " + (error.message || "Internal server error") },
       { status: 500 }
     );
   }
