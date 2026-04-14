@@ -1,44 +1,41 @@
-// CHUNKING
-export function chunkText(text: string, chunkSize: number = 500, overlap: number = 100): string[] {
-  const cleanText = text.replace(/\s+/g, ' ').trim();
-  const chunks: string[] = [];
-  let i = 0;
+import { GoogleGenerativeAI, TaskType } from "@google/generative-ai";
 
-  while (i < cleanText.length) {
-    const chunk = cleanText.slice(i, i + chunkSize);
-    chunks.push(chunk);
-    i += chunkSize - overlap;
+const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY!);
+
+export async function getVoyageEmbedding(text: string) {
+  try {
+    const model = genAI.getGenerativeModel({ model: "gemini-embedding-2-preview" });
+    
+    const result = await model.embedContent({
+      content: { role: "user", parts: [{ text }] },
+      taskType: TaskType.RETRIEVAL_DOCUMENT,
+    });
+
+    let values = Array.from(result.embedding.values);
+
+    if (values.length > 1024) {
+      values = values.slice(0, 1024);
+    }
+
+    while (values.length < 1024) {
+      values.push(0);
+    }
+
+    return values;
+  } catch (error: any) {
+    console.error("Detail Error Gemini API:", error.message);
+    throw new Error(`Gagal memanggil Gemini API. Cek terminal untuk detailnya.`);
   }
-
-  return chunks;
 }
 
-// VOYAGE AI EMBEDDING
-export async function getVoyageEmbedding(text: string): Promise<number[]> {
-  const VOYAGE_API_KEY = process.env.VOYAGE_API_KEY;
-
-  if (!VOYAGE_API_KEY) {
-    throw new Error("VOYAGE_API_KEY belum dipasang di file .env!");
+export function chunkText(text: string, size: number, overlap: number) {
+  const words = text.split(/\s+/);
+  const chunks = [];
+  let i = 0;
+  while (i < words.length) {
+    const chunk = words.slice(i, i + size).join(' ');
+    chunks.push(chunk);
+    i += (size - overlap);
   }
-
-  const response = await fetch("https://api.voyageai.com/v1/embeddings", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${VOYAGE_API_KEY}`,
-    },
-    body: JSON.stringify({
-      input: text,
-      model: "voyage-3",
-    }),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text(); 
-      console.error("🚨 Detail Error Voyage AI:", errorText);
-      throw new Error(`Gagal memanggil Voyage AI. Cek terminal untuk detailnya.`);
-  }
-
-  const data = await response.json();
-  return data.data[0].embedding;
+  return chunks;
 }
