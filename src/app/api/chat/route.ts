@@ -2,13 +2,15 @@ import { streamText, convertToModelMessages, generateText } from 'ai';
 import { createGroq } from '@ai-sdk/groq';
 import { prisma } from '@/lib/prisma';
 import { createClient } from '@/utils/supabase/server';
-import { getVoyageEmbedding } from '@/lib/rag-utils';
+import { getEmbedding } from '@/lib/rag-utils';
 
 export const runtime = 'nodejs';
 
 const groq = createGroq({
   apiKey: process.env.GROQ_API_KEY,
 });
+
+const SIMILARITY_THRESHOLD = 0.5;
 
 export async function POST(req: Request) {
 
@@ -28,7 +30,7 @@ export async function POST(req: Request) {
     }
   });
 
-  const { messages, sessionId } = await req.json();
+  const { messages, sessionId, ragEnabled = true } = await req.json();
   console.log('Received sessionId:', sessionId);
 
   let session = null;
@@ -110,58 +112,60 @@ export async function POST(req: Request) {
     data: { createdAt: new Date() },
   });
 
-  let contextText = "";
-  try {
-    console.log("Menerjemahkan pertanyaan ke vektor...");
-    const embeddingArray = await getVoyageEmbedding(userContent);
-    const embeddingString = `[${embeddingArray.join(',')}]`;
+  let contextText = '';
+  let ragSources: string[] = [];
 
-    console.log("Mencari dokumen yang relevan di Supabase...");
+  if (ragEnabled) {
+    try {
+      const embeddingArray = await getEmbedding(userContent);
+      const embeddingString = `[${embeddingArray.join(',')}]`;
 
-    const matchedDocs = await prisma.$queryRaw<any[]>`
-      SELECT content, 1 - (embedding <=> ${embeddingString}::vector) as similarity
-      FROM "Document"
-      WHERE 1=1
-      AND "userId" = ${user.id}
-      AND "isActive" = true 
-      ORDER BY similarity DESC
-      LIMIT 3;
-    `;
+      const matchedDocs = await prisma.$queryRaw<any[]>`
+        SELECT content, metadata, 1 - (embedding <=> ${embeddingString}::vector) as similarity
+        FROM "Document"
+        WHERE "userId" = ${user.id}
+        AND "isActive" = true
+        AND 1 - (embedding <=> ${embeddingString}::vector) > ${SIMILARITY_THRESHOLD}
+        ORDER BY similarity DESC
+        LIMIT 3;
+      `;
 
-    contextText = matchedDocs.map(doc => doc.content).join('\n\n');
-    console.log("✅ Konteks berhasil ditarik!");
-  } catch (err) {
-    console.error("Gagal menarik konteks RAG:", err);
+      if (matchedDocs.length > 0) {
+        contextText = matchedDocs.map(doc => doc.content).join('\n\n');
+        ragSources = [...new Set(matchedDocs.map(doc => (doc.metadata as any)?.filename).filter(Boolean))];
+      }
+    } catch (err) {
+      console.error("Gagal menarik konteks RAG:", err);
+    }
   }
 
-  const systemPrompt = `Kamu adalah asisten AI yang bernama MagangBot yang diciptakan oleh Dhani. MagangBot adalah asisten AI yang cerdas, ramah, dan membantu yang selalu menjawab dalam Bahasa Indonesia dengan jelas dan mudah dipahami; berikan jawaban yang terstruktur dan informatif namun tetap ringkas, jelaskan langkah demi langkah jika topik kompleks, gunakan contoh bila perlu, fokus membantu pengguna memahami informasi atau menyelesaikan masalah, jangan mengarang fakta dan katakan jika tidak yakin, serta minta klarifikasi jika pertanyaan pengguna kurang jelas.
+  let systemPrompt = `Kamu adalah asisten AI yang bernama MagangBot yang diciptakan oleh Dhani. MagangBot adalah asisten AI yang cerdas, ramah, dan membantu yang selalu menjawab dalam Bahasa Indonesia dengan jelas dan mudah dipahami; berikan jawaban yang terstruktur dan informatif namun tetap ringkas, jelaskan langkah demi langkah jika topik kompleks, gunakan contoh bila perlu, fokus membantu pengguna memahami informasi atau menyelesaikan masalah, jangan mengarang fakta dan katakan jika tidak yakin, serta minta klarifikasi jika pertanyaan pengguna kurang jelas. Selalu jawab dalam Bahasa Indonesia dengan jelas, terstruktur, dan informatif.`;
 
-  PENTING - ATURAN MENJAWAB:
-  Kamu telah diberikan KONTEKS DOKUMEN di bawah ini. Gunakan HANYA informasi dari konteks tersebut untuk menjawab pertanyaan user. 
-  Jika jawabannya tidak ada di dalam konteks, katakan dengan jujur "Maaf, saya tidak memiliki informasi mengenai hal tersebut di dalam basis data dokumen saya," dan JANGAN mengarang fakta.
+  if (ragEnabled && contextText) {
+    systemPrompt += `\n\nPENTING - ATURAN MENJAWAB:
+Kamu telah diberikan KONTEKS DOKUMEN di bawah ini. Gunakan HANYA informasi dari konteks tersebut.
+Jika jawabannya tidak ada di dalam konteks, katakan "Maaf, saya tidak memiliki informasi tersebut dalam dokumen saya."
 
-  KONTEKS DOKUMEN:
-  ${contextText}`;
+KONTEKS DOKUMEN:
+${contextText}`;
+  } else if (ragEnabled && !contextText) {
+    systemPrompt += `\n\nCatatan: Tidak ada dokumen relevan yang ditemukan untuk pertanyaan ini. Jawab berdasarkan pengetahuan umummu, tapi informasikan bahwa jawaban tidak berasal dari dokumen.`;
+  }
 
   const result = streamText({
     model: groq('llama-3.3-70b-versatile'),
     system: systemPrompt,
     messages: await convertToModelMessages(messages),
-
     async onFinish({ text }) {
-      await prisma.message.create({
-        data: {
-          content: text,
-          role: 'assistant',
-          sessionId: session!.id,
-        },
-      });
+      await prisma.message.create({ data: { content: text, role: 'assistant', sessionId: session!.id } });
     },
   });
 
   return result.toUIMessageStreamResponse({
     headers: {
       'X-Session-Id': session.id,
+      'X-RAG-Sources': ragSources.join(','),
+      'X-RAG-Used': contextText ? 'true' : 'false',
     },
   });
 }

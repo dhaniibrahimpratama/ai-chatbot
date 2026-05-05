@@ -3,6 +3,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 
+type UploadQueueItem = {
+  file: File;
+  status: 'pending' | 'processing' | 'done' | 'error';
+  message: string;
+  progress: number;
+};
+
 export default function UploadPage() {
   const [filename, setFilename] = useState('');
   const [text, setText] = useState('');
@@ -10,10 +17,10 @@ export default function UploadPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [documents, setDocuments] = useState<any[]>([]);
   const [uploadMode, setUploadMode] = useState<'text' | 'file'>('file');
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [uploadQueue, setUploadQueue] = useState<UploadQueueItem[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
-
   const [editingDoc, setEditingDoc] = useState<any>(null);
   const [editFilename, setEditFilename] = useState('');
   const [editContent, setEditContent] = useState('');
@@ -27,61 +34,46 @@ export default function UploadPage() {
 
   useEffect(() => { fetchDocs(); }, [fetchDocs]);
 
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(true);
-  };
+  const filteredDocuments = documents.filter(doc =>
+    doc.filename.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
-  };
+  const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); setIsDragging(true); };
+  const handleDragLeave = (e: React.DragEvent) => { e.preventDefault(); setIsDragging(false); };
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
-    e.stopPropagation();
     setIsDragging(false);
-
-    const files = e.dataTransfer.files;
-    if (files.length > 0) {
-      validateAndSetFile(files[0]);
-    }
+    const files = Array.from(e.dataTransfer.files);
+    addFilesToQueue(files);
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (files && files.length > 0) {
-      validateAndSetFile(files[0]);
-    }
+    const files = Array.from(e.target.files ?? []);
+    addFilesToQueue(files);
   };
 
-  const validateAndSetFile = (file: File) => {
-    const ext = file.name.split('.').pop()?.toLowerCase();
-    if (ext !== 'txt' && ext !== 'pdf') {
-      setStatus('❌ Format file tidak didukung. Hanya .txt dan .pdf yang diizinkan.');
-      return;
+  const addFilesToQueue = (files: File[]) => {
+    const validFiles = files.filter(file => {
+      const ext = file.name.split('.').pop()?.toLowerCase();
+      if (ext !== 'txt' && ext !== 'pdf') return false;
+      if (file.size > 10 * 1024 * 1024) return false;
+      return true;
+    });
+
+    if (validFiles.length !== files.length) {
+      setStatus(`⚠️ ${files.length - validFiles.length} file dilewati (format tidak didukung atau >10MB)`);
     }
 
-    const maxSize = 10 * 1024 * 1024; // 10MB
-    if (file.size > maxSize) {
-      setStatus('❌ Ukuran file terlalu besar. Maksimal 10MB.');
-      return;
-    }
-
-    setSelectedFile(file);
+    const newItems: UploadQueueItem[] = validFiles.map(file => ({
+      file, status: 'pending', message: 'Menunggu...', progress: 0,
+    }));
+    setUploadQueue(prev => [...prev, ...newItems]);
     setStatus('');
-    if (!filename) {
-      setFilename(file.name.replace(/\.[^/.]+$/, ''));
-    }
   };
 
-  const removeFile = () => {
-    setSelectedFile(null);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
+  const removeFromQueue = (index: number) => {
+    setUploadQueue(prev => prev.filter((_, i) => i !== index));
   };
 
   const formatFileSize = (bytes: number) => {
@@ -92,63 +84,84 @@ export default function UploadPage() {
 
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsLoading(true);
-    setStatus('Memproses vektor...');
 
-    try {
-      let response: Response;
+    if (uploadMode === 'file') {
+      if (uploadQueue.length === 0) return;
+      setIsLoading(true);
 
-      if (uploadMode === 'file' && selectedFile) {
-        const formData = new FormData();
-        formData.append('file', selectedFile);
-        formData.append('filename', filename);
+      for (let i = 0; i < uploadQueue.length; i++) {
+        const item = uploadQueue[i];
+        if (item.status === 'done') continue;
 
-        response = await fetch('/api/upload', {
-          method: 'POST',
-          body: formData,
-        });
-      } else {
-        response = await fetch('/api/upload', {
+        setUploadQueue(prev => prev.map((q, idx) =>
+          idx === i ? { ...q, status: 'processing', message: 'Memproses...', progress: 30 } : q
+        ));
+
+        try {
+          const formData = new FormData();
+          formData.append('file', item.file);
+          formData.append('filename', item.file.name.replace(/\.[^/.]+$/, ''));
+
+          setUploadQueue(prev => prev.map((q, idx) =>
+            idx === i ? { ...q, progress: 60, message: 'Membuat embedding...' } : q
+          ));
+
+          const response = await fetch('/api/upload', { method: 'POST', body: formData });
+          const result = await response.json();
+
+          if (response.ok) {
+            setUploadQueue(prev => prev.map((q, idx) =>
+              idx === i ? { ...q, status: 'done', message: `✅ ${result.chunksSaved} chunks tersimpan`, progress: 100 } : q
+            ));
+          } else {
+            setUploadQueue(prev => prev.map((q, idx) =>
+              idx === i ? { ...q, status: 'error', message: `❌ ${result.error}`, progress: 0 } : q
+            ));
+          }
+        } catch {
+          setUploadQueue(prev => prev.map((q, idx) =>
+            idx === i ? { ...q, status: 'error', message: '❌ Gagal upload', progress: 0 } : q
+          ));
+        }
+      }
+
+      await fetchDocs();
+      setIsLoading(false);
+
+    } else {
+      if (!text.trim() || !filename.trim()) return;
+      setIsLoading(true);
+      setStatus('Memproses vektor...');
+      try {
+        const response = await fetch('/api/upload', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ filename, text }),
         });
+        const result = await response.json();
+        if (response.ok) {
+          setStatus(`✅ Berhasil! ${result.chunksSaved} chunks tersimpan.`);
+          setFilename('');
+          setText('');
+          await fetchDocs();
+        } else {
+          setStatus(`❌ ${result.error}`);
+        }
+      } catch {
+        setStatus('❌ Gagal terhubung ke server.');
       }
-
-      const result = await response.json();
-      if (response.ok) {
-        setStatus(`✅ Sukses disimpan! (${result.chunksSaved} chunks)`);
-        setFilename('');
-        setText('');
-        setSelectedFile(null);
-        if (fileInputRef.current) fileInputRef.current.value = '';
-        fetchDocs();
-      } else {
-        setStatus(`❌ Gagal: ${result.error || 'Terjadi kesalahan di server'}`);
-      }
-    } catch (error) {
-      setStatus('❌ Gagal: Masalah jaringan.');
-    } finally {
       setIsLoading(false);
     }
   };
 
-  const toggleStatus = async (filename: string, currentStatus: boolean) => {
-    await fetch('/api/documents', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ filename, isActive: currentStatus })
-    });
+  const toggleStatus = async (docFilename: string, isActive: boolean) => {
+    await fetch('/api/documents', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filename: docFilename, isActive }) });
     fetchDocs();
   };
 
-  const deleteDoc = async (filename: string) => {
-    if (!confirm(`Yakin ingin menghapus dokumen "${filename}"?`)) return;
-    await fetch('/api/documents', {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ filename })
-    });
+  const deleteDoc = async (docFilename: string) => {
+    if (!confirm(`Hapus dokumen "${docFilename}"?`)) return;
+    await fetch('/api/documents', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filename: docFilename }) });
     fetchDocs();
   };
 
@@ -159,321 +172,239 @@ export default function UploadPage() {
   };
 
   const saveEdit = async () => {
+    if (!editFilename.trim()) return;
     setIsSavingEdit(true);
-    try {
-      const res = await fetch('/api/documents', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          originalFilename: editingDoc.filename,
-          newFilename: editFilename,
-          content: editContent 
-        })
-      });
-      if (res.ok) {
-        setEditingDoc(null);
-        fetchDocs();
-      } else {
-        alert("Gagal menyimpan perubahan.");
-      }
-    } catch (error) {
-      alert("Terjadi kesalahan jaringan.");
-    } finally {
-      setIsSavingEdit(false);
-    }
+    await fetch('/api/documents', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ originalFilename: editingDoc.filename, newFilename: editFilename, content: editContent }),
+    });
+    setIsSavingEdit(false);
+    setEditingDoc(null);
+    fetchDocs();
   };
 
-  const isFormValid = uploadMode === 'file' ? !!selectedFile : !!text.trim();
+  const allDone = uploadQueue.length > 0 && uploadQueue.every(q => q.status === 'done' || q.status === 'error');
 
   return (
-    <div className="min-h-screen bg-[#0f0f10] text-[#ececec] p-8 relative">
-      <div className="max-w-4xl mx-auto">
-        <Link href="/" className="inline-flex items-center gap-2 text-violet-400 mb-6 bg-violet-500/10 px-4 py-2 rounded-xl border border-violet-500/20">
-           ← Kembali ke Chat
-        </Link>
+    <div className="min-h-screen bg-[#0f0f10] text-[#ececec]">
+      <div className="max-w-3xl mx-auto px-4 py-10">
 
-        <h1 className="text-3xl font-bold mb-8">📁 RAG Document Manager</h1>
+        {/* Header */}
+        <div className="flex items-center gap-4 mb-8">
+          <Link href="/" title="Kembali" aria-label="Kembali ke chat"
+            className="p-2 hover:bg-white/5 rounded-xl transition-colors text-[#666] hover:text-[#ececec]">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <polyline points="15 18 9 12 15 6"/>
+            </svg>
+          </Link>
+          <div>
+            <h1 className="text-xl font-semibold">Kelola Dokumen RAG</h1>
+            <p className="text-sm text-[#555] mt-0.5">Upload dokumen agar MagangBot bisa menjawab berdasarkan isinya</p>
+          </div>
+        </div>
 
-        {/* FORM UPLOAD */}
-        <form onSubmit={handleUpload} className="bg-white/5 p-6 rounded-2xl border border-white/10 mb-10">
-          <h2 className="text-lg font-semibold mb-4 text-violet-400">Tambah Dokumen Baru</h2>
+        {/* Upload Form */}
+        <form onSubmit={handleUpload} className="bg-white/5 border border-white/10 rounded-2xl p-6 mb-6">
 
-          {/* Mode Toggle */}
+          {/* Mode toggle */}
           <div className="flex gap-2 mb-5">
-            <button
-              type="button"
-              onClick={() => setUploadMode('file')}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${
-                uploadMode === 'file'
-                  ? 'bg-violet-600 text-white shadow-lg shadow-violet-900/30'
-                  : 'bg-white/5 text-[#888] hover:bg-white/10 hover:text-[#ccc] border border-white/10'
-              }`}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                <polyline points="17 8 12 3 7 8"/>
-                <line x1="12" y1="3" x2="12" y2="15"/>
-              </svg>
-              Upload File
-            </button>
-            <button
-              type="button"
-              onClick={() => setUploadMode('text')}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${
-                uploadMode === 'text'
-                  ? 'bg-violet-600 text-white shadow-lg shadow-violet-900/30'
-                  : 'bg-white/5 text-[#888] hover:bg-white/10 hover:text-[#ccc] border border-white/10'
-              }`}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-              </svg>
-              Ketik Manual
-            </button>
+            {(['file', 'text'] as const).map(mode => (
+              <button key={mode} type="button" onClick={() => setUploadMode(mode)}
+                className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${
+                  uploadMode === mode ? 'bg-violet-600 text-white' : 'bg-white/5 text-[#777] hover:bg-white/8'
+                }`}>
+                {mode === 'file' ? 'Upload File' : 'Input Teks'}
+              </button>
+            ))}
           </div>
 
-          {/* Filename Input */}
-          <input
-            type="text"
-            value={filename}
-            onChange={(e) => setFilename(e.target.value)}
-            placeholder="Nama Dokumen (opsional, otomatis dari nama file)"
-            className="w-full bg-[#1a1a1b] border border-white/10 rounded-xl px-4 py-3 mb-4 focus:border-violet-500/50 outline-none transition-colors"
-          />
-
-          {/* File Upload Mode */}
           {uploadMode === 'file' && (
             <>
-              {/* Drop Zone */}
+              {/* Drop zone */}
               <div
+                onClick={() => fileInputRef.current?.click()}
                 onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
                 onDrop={handleDrop}
-                onClick={() => fileInputRef.current?.click()}
-                className={`relative border-2 border-dashed rounded-2xl p-8 mb-4 text-center cursor-pointer transition-all duration-200 ${
-                  isDragging
-                    ? 'border-violet-500 bg-violet-500/10 scale-[1.01]'
-                    : selectedFile
-                      ? 'border-green-500/40 bg-green-500/5'
-                      : 'border-white/15 bg-[#1a1a1b]/50 hover:border-white/30 hover:bg-[#1a1a1b]'
-                }`}
-              >
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".txt,.pdf"
-                  onChange={handleFileSelect}
-                  className="hidden"
-                  title="Pilih file TXT atau PDF"
-                  aria-label="Pilih file TXT atau PDF"
-                />
+                className={`cursor-pointer border-2 border-dashed rounded-xl p-8 text-center mb-4 transition-colors ${
+                  isDragging ? 'border-violet-500 bg-violet-500/5' : 'border-white/15 hover:border-white/30 hover:bg-white/5'
+                }`}>
+                <input ref={fileInputRef} type="file" accept=".txt,.pdf" multiple onChange={handleFileSelect}
+                  className="hidden" title="Pilih file" aria-label="Pilih file" />
+                <div className="w-12 h-12 rounded-2xl bg-violet-500/10 flex items-center justify-center mx-auto mb-3">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-violet-400">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="17 8 12 3 7 8"/>
+                    <line x1="12" y1="3" x2="12" y2="15"/>
+                  </svg>
+                </div>
+                <p className="text-sm text-[#888]">
+                  <span className="text-violet-400 font-medium">Klik atau drag & drop</span> — bisa pilih beberapa file sekaligus
+                </p>
+                <p className="text-xs text-[#555] mt-1">Format: .txt dan .pdf • Maks 10MB per file</p>
+              </div>
 
-                {selectedFile ? (
-                  <div className="flex items-center justify-center gap-4">
-                    {/* File Icon */}
-                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${
-                      selectedFile.name.endsWith('.pdf')
-                        ? 'bg-red-500/20 text-red-400'
-                        : 'bg-blue-500/20 text-blue-400'
-                    }`}>
-                      {selectedFile.name.endsWith('.pdf') ? (
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                          <polyline points="14 2 14 8 20 8"/>
-                          <line x1="16" y1="13" x2="8" y2="13"/>
-                          <line x1="16" y1="17" x2="8" y2="17"/>
-                          <polyline points="10 9 9 9 8 9"/>
-                        </svg>
-                      ) : (
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                          <polyline points="14 2 14 8 20 8"/>
-                          <line x1="16" y1="13" x2="8" y2="13"/>
-                          <line x1="16" y1="17" x2="8" y2="17"/>
-                        </svg>
+              {/* Upload queue dengan progress bar */}
+              {uploadQueue.length > 0 && (
+                <div className="space-y-2 mb-4">
+                  {uploadQueue.map((item, idx) => (
+                    <div key={idx} className="bg-black/30 border border-white/8 rounded-xl px-4 py-3">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <div className="flex items-center gap-2">
+                          <span className={`text-lg ${item.file.name.endsWith('.pdf') ? '📕' : '📄'}`} />
+                          <div>
+                            <p className="text-sm font-medium truncate max-w-xs">{item.file.name}</p>
+                            <p className="text-xs text-[#555]">{formatFileSize(item.file.size)}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-[#666]">{item.message}</span>
+                          {item.status === 'pending' && (
+                            <button type="button" onClick={() => removeFromQueue(idx)}
+                              title="Hapus dari antrian" aria-label="Hapus dari antrian"
+                              className="p-1 hover:text-red-400 text-[#555] transition-colors">
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                              </svg>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      {/* Progress bar */}
+                      {item.status !== 'pending' && (
+                        <div className="w-full bg-white/5 rounded-full h-1.5">
+                          <div className={`h-1.5 rounded-full transition-all duration-500 ${
+                            item.status === 'done' ? 'bg-green-500' :
+                            item.status === 'error' ? 'bg-red-500' : 'bg-violet-500'
+                          }`} style={{ width: `${item.progress}%` }} />
+                        </div>
                       )}
                     </div>
+                  ))}
+                </div>
+              )}
 
-                    <div className="text-left">
-                      <p className="font-medium text-[#ececec]">{selectedFile.name}</p>
-                      <p className="text-xs text-[#666] mt-0.5">
-                        {formatFileSize(selectedFile.size)} • {selectedFile.name.split('.').pop()?.toUpperCase()}
-                      </p>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        removeFile();
-                      }}
-                      title="Hapus file"
-                      aria-label="Hapus file"
-                      className="ml-auto p-2 rounded-lg hover:bg-white/10 text-[#666] hover:text-red-400 transition-colors"
-                    >
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <line x1="18" y1="6" x2="6" y2="18"/>
-                        <line x1="6" y1="6" x2="18" y2="18"/>
-                      </svg>
-                    </button>
-                  </div>
-                ) : (
-                  <div>
-                    <div className="w-14 h-14 rounded-2xl bg-violet-500/10 flex items-center justify-center mx-auto mb-4">
-                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-violet-400">
-                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                        <polyline points="17 8 12 3 7 8"/>
-                        <line x1="12" y1="3" x2="12" y2="15"/>
-                      </svg>
-                    </div>
-                    <p className="text-[#888] text-sm mb-1">
-                      <span className="text-violet-400 font-medium">Klik untuk pilih file</span> atau drag & drop di sini
-                    </p>
-                    <p className="text-[#555] text-xs">
-                      Format yang didukung: <span className="text-[#777] font-mono">.txt</span> dan <span className="text-[#777] font-mono">.pdf</span> • Maks 10MB
-                    </p>
-                  </div>
-                )}
-              </div>
+              {/* Clear queue jika semua done */}
+              {allDone && (
+                <button type="button" onClick={() => setUploadQueue([])}
+                  className="text-xs text-[#555] hover:text-[#888] mb-3 transition-colors">
+                  Hapus semua dari antrian
+                </button>
+              )}
             </>
           )}
 
-          {/* Text Input Mode */}
           {uploadMode === 'text' && (
-            <textarea
-              required={uploadMode === 'text'}
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              placeholder="Ketik atau paste teks di sini..."
-              rows={6}
-              className="w-full bg-[#1a1a1b] border border-white/10 rounded-xl px-4 py-3 mb-4 focus:border-violet-500/50 outline-none transition-colors resize-none"
-            />
+            <>
+              <input value={filename} onChange={e => setFilename(e.target.value)} placeholder="Nama dokumen"
+                required className="w-full bg-[#1a1a1b] border border-white/10 rounded-xl px-4 py-3 mb-3 focus:border-violet-500/50 outline-none" />
+              <textarea value={text} onChange={e => setText(e.target.value)} placeholder="Ketik atau paste teks di sini..."
+                rows={6} required className="w-full bg-[#1a1a1b] border border-white/10 rounded-xl px-4 py-3 mb-4 focus:border-violet-500/50 outline-none resize-none" />
+            </>
           )}
 
-          {/* Submit Button */}
-          <button
-            disabled={isLoading || !isFormValid}
-            className="w-full bg-violet-600 py-3 rounded-xl font-bold hover:bg-violet-700 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-          >
+          <button type="submit"
+            disabled={isLoading || (uploadMode === 'file' ? uploadQueue.filter(q => q.status === 'pending').length === 0 : !text.trim() || !filename.trim())}
+            className="w-full bg-violet-600 py-3 rounded-xl font-bold hover:bg-violet-700 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
             {isLoading ? (
               <span className="flex items-center justify-center gap-2">
                 <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
                 </svg>
-                Memproses & Menyimpan Vektor...
+                Memproses...
               </span>
-            ) : (
-              uploadMode === 'file' ? 'Upload & Simpan ke Database Vektor' : 'Simpan ke Database Vektor'
-            )}
+            ) : uploadMode === 'file'
+              ? `Upload ${uploadQueue.filter(q => q.status === 'pending').length} File`
+              : 'Simpan ke Database Vektor'}
           </button>
 
-          {/* Status Message */}
           {status && (
-            <p className={`mt-4 text-center text-sm px-4 py-3 rounded-xl ${
-              status.includes('✅')
-                ? 'bg-green-500/10 text-green-400 border border-green-500/20'
-                : status.includes('❌')
-                  ? 'bg-red-500/10 text-red-400 border border-red-500/20'
-                  : 'bg-violet-500/10 text-violet-400 border border-violet-500/20'
-            }`}>
-              {status}
-            </p>
+            <p className={`mt-3 text-center text-sm px-4 py-2.5 rounded-xl ${
+              status.includes('✅') ? 'bg-green-500/10 text-green-400 border border-green-500/20' :
+              status.includes('❌') ? 'bg-red-500/10 text-red-400 border border-red-500/20' :
+              'bg-violet-500/10 text-violet-400 border border-violet-500/20'
+            }`}>{status}</p>
           )}
         </form>
 
-        {/* DAFTAR DOKUMEN */}
+        {/* Search + Daftar Dokumen */}
         <div className="bg-white/5 rounded-2xl border border-white/10 overflow-hidden">
-          <div className="p-4 border-b border-white/10 bg-white/5">
-            <h2 className="font-semibold">Daftar Dokumen MagangBot</h2>
+          <div className="p-4 border-b border-white/10 bg-white/5 flex items-center gap-3">
+            <h2 className="font-semibold flex-1">Daftar Dokumen ({filteredDocuments.length})</h2>
+            <div className="relative">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-[#555]">
+                <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+              </svg>
+              <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+                placeholder="Cari dokumen..." aria-label="Cari dokumen"
+                className="bg-black/30 border border-white/10 rounded-xl pl-8 pr-3 py-2 text-sm focus:outline-none focus:border-violet-500/40 w-48" />
+            </div>
           </div>
           <table className="w-full text-left text-sm">
             <thead>
               <tr className="text-gray-500 border-b border-white/5">
                 <th className="p-4 font-medium">Nama Dokumen</th>
                 <th className="p-4 font-medium text-center">Status</th>
-                <th className="p-4 font-medium text-right">Aksi</th>
+                <th className="p-4 font-medium text-center">Aksi</th>
               </tr>
             </thead>
             <tbody>
-              {documents.map((doc) => (
+              {filteredDocuments.map(doc => (
                 <tr key={doc.filename} className="border-b border-white/5 hover:bg-white/[0.02] transition-colors">
                   <td className="p-4">
                     <div className="font-medium">{doc.filename}</div>
-                    <div className="text-[10px] text-gray-500">{new Date(doc.createdAt).toLocaleDateString()} • {doc.chunkCount} Chunks</div>
+                    <div className="text-[10px] text-gray-500">
+                      {new Date(doc.createdAt).toLocaleDateString('id-ID')} • {doc.chunkCount} Chunks
+                    </div>
                   </td>
                   <td className="p-4 text-center">
-                    <button 
-                      onClick={() => toggleStatus(doc.filename, doc.isActive)}
+                    <button onClick={() => toggleStatus(doc.filename, doc.isActive)}
                       className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider transition-colors ${
                         doc.isActive ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30' : 'bg-gray-500/20 text-gray-400 hover:bg-gray-500/30'
-                      }`}
-                    >
+                      }`}>
                       {doc.isActive ? 'Active' : 'Disabled'}
                     </button>
                   </td>
-                  <td className="p-4 text-right">
-                    <div className="flex justify-end gap-2">
-                      <button onClick={() => openEditModal(doc)} className="text-blue-400 hover:text-blue-300 transition-colors p-2 font-medium">
-                        Lihat / Edit
-                      </button>
-                      <button onClick={() => deleteDoc(doc.filename)} className="text-red-500 hover:text-red-400 transition-colors p-2 font-medium">
-                        Hapus
-                      </button>
+                  <td className="p-4 text-center">
+                    <div className="flex justify-center gap-2">
+                      <button onClick={() => openEditModal(doc)} className="text-blue-400 hover:text-blue-300 p-2 transition-colors">Lihat / Edit</button>
+                      <button onClick={() => deleteDoc(doc.filename)} className="text-red-500 hover:text-red-400 p-2 transition-colors">Hapus</button>
                     </div>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-          {documents.length === 0 && <p className="p-10 text-center text-gray-500">Belum ada dokumen di database.</p>}
+          {filteredDocuments.length === 0 && (
+            <p className="p-10 text-center text-gray-500">
+              {searchQuery ? `Tidak ada dokumen dengan kata "${searchQuery}"` : 'Belum ada dokumen di database.'}
+            </p>
+          )}
         </div>
       </div>
 
-      {/* EDIT DOKUMEN */}
+      {/* Edit Modal */}
       {editingDoc && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-[#161617] border border-white/10 rounded-2xl p-6 w-full max-w-2xl shadow-2xl">
-            <h2 className="text-xl font-bold mb-5 text-white">Lihat / Edit Dokumen</h2>
-            
+            <h2 className="text-xl font-bold mb-5">Lihat / Edit Dokumen</h2>
             <div className="mb-4">
               <label htmlFor="editFilename" className="block text-sm text-gray-400 mb-1">Nama Dokumen</label>
-              <input 
-                id="editFilename"
-                placeholder="Nama Dokumen"
-                title="Nama Dokumen"
-                value={editFilename} 
-                onChange={e => setEditFilename(e.target.value)} 
-                className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white outline-none focus:border-blue-500/50 transition-colors" 
-              />
+              <input id="editFilename" title="Nama Dokumen" value={editFilename} onChange={e => setEditFilename(e.target.value)}
+                className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 outline-none focus:border-blue-500/50 transition-colors" />
             </div>
-            
             <div className="mb-6">
               <label htmlFor="editContent" className="block text-sm text-gray-400 mb-1">Isi Teks Dokumen</label>
-              <textarea 
-                id="editContent"
-                placeholder="Isi Teks Dokumen"
-                title="Isi Teks Dokumen"
-                value={editContent} 
-                onChange={e => setEditContent(e.target.value)} 
-                rows={8} 
-                className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white outline-none focus:border-blue-500/50 transition-colors"
-              ></textarea>
+              <textarea id="editContent" title="Isi Teks Dokumen" value={editContent} onChange={e => setEditContent(e.target.value)}
+                rows={8} className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 outline-none focus:border-blue-500/50 transition-colors" />
             </div>
-            
             <div className="flex justify-end gap-3">
-              <button 
-                onClick={() => setEditingDoc(null)} 
-                className="px-5 py-2.5 rounded-xl text-gray-400 hover:text-white hover:bg-white/5 transition-colors font-medium"
-              >
-                Batal
-              </button>
-              <button 
-                onClick={saveEdit} 
-                disabled={isSavingEdit} 
-                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-              >
+              <button onClick={() => setEditingDoc(null)} className="px-5 py-2.5 rounded-xl text-gray-400 hover:text-white hover:bg-white/5 transition-colors">Batal</button>
+              <button onClick={saveEdit} disabled={isSavingEdit}
+                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium transition-all disabled:opacity-50">
                 {isSavingEdit ? 'Menghitung Ulang Vektor...' : 'Simpan Perubahan'}
               </button>
             </div>

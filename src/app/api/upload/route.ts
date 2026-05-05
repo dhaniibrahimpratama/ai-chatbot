@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { chunkText, getVoyageEmbedding } from '@/lib/rag-utils';
+import { chunkText, getEmbedding } from '@/lib/rag-utils';
 import { createClient } from '@/utils/supabase/server';
 import { extractText } from 'unpdf';
 
@@ -66,7 +66,7 @@ export async function POST(req: Request) {
     let savedCount = 0;
 
     for (const chunk of chunks) {
-      const embeddingArray = await getVoyageEmbedding(chunk);
+      const embeddingArray = await getEmbedding(chunk);
 
       const embeddingString = `[${embeddingArray.join(',')}]`;
 

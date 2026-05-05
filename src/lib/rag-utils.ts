@@ -2,9 +2,9 @@ import { GoogleGenerativeAI, TaskType } from "@google/generative-ai";
 
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY!);
 
-export async function getVoyageEmbedding(text: string) {
+export async function getEmbedding(text: string) {
   try {
-    const model = genAI.getGenerativeModel({ model: "gemini-embedding-2-preview" });
+    const model = genAI.getGenerativeModel({ model: "gemini-embedding-2" });
     
     const result = await model.embedContent({
       content: { role: "user", parts: [{ text }] },
@@ -23,10 +23,12 @@ export async function getVoyageEmbedding(text: string) {
 
     return values;
   } catch (error: any) {
-    console.error("Detail Error Gemini API:", error.message);
-    throw new Error(`Gagal memanggil Gemini API. Cek terminal untuk detailnya.`);
+    console.error("Error Gemini API:", error.message);
+    throw new Error(`Gagal memanggil Gemini API.`);
   }
 }
+
+export const getVoyageEmbedding = getEmbedding;
 
 export function chunkText(text: string, size: number, overlap: number) {
   const words = text.split(/\s+/);

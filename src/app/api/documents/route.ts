@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '@/lib/prisma';
 import { createClient } from '@/utils/supabase/server';
-import { chunkText, getVoyageEmbedding } from '@/lib/rag-utils'; // <--- Butuh chunkText juga
+import { chunkText, getEmbedding } from '@/lib/rag-utils';
 
-const prisma = new PrismaClient();
+export const runtime = 'nodejs';
 
 export async function GET() {
   try {
@@ -96,7 +96,7 @@ export async function PUT(req: Request) {
     const chunks = chunkText(content, 500, 100);
 
     for (const chunk of chunks) {
-      const embeddingArray = await getVoyageEmbedding(chunk);
+      const embeddingArray = await getEmbedding(chunk);
       const embeddingString = `[${embeddingArray.join(',')}]`;
 
       await prisma.$executeRaw`
