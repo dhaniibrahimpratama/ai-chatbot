@@ -380,14 +380,30 @@ export default function Chat() {
                 if (!input.trim()) return;
                 sendMessage({ text: input });
                 setInput('');
+                const textarea = e.currentTarget.querySelector('textarea');
+                if (textarea) textarea.style.height = 'auto';
               }}
-              className="flex gap-2 bg-white/5 backdrop-blur-md shadow-2xl border border-white/10 rounded-2xl px-4 py-3 focus-within:border-violet-500/50 transition-all z-10 relative"
+              className="flex items-end gap-2 bg-white/5 backdrop-blur-md shadow-2xl border border-white/10 rounded-2xl px-4 py-3 focus-within:border-violet-500/50 transition-all z-10 relative"
             >
-              <input
-                className="flex-1 bg-transparent text-sm text-[#ececec] placeholder-[#444] focus:outline-none disabled:opacity-40"
+              <textarea
+                className="flex-1 bg-transparent text-sm text-[#ececec] placeholder-[#444] focus:outline-none disabled:opacity-40 resize-none max-h-[150px] overflow-y-auto leading-relaxed py-1"
+                rows={1}
                 value={input}
                 placeholder={isLoading ? 'MagangBot sedang mengetik...' : 'Ketik pesanmu di sini...'}
-                onChange={e => setInput(e.currentTarget.value)}
+                onChange={e => {
+                  setInput(e.target.value);
+                  e.target.style.height = 'auto';
+                  e.target.style.height = `${e.target.scrollHeight}px`;
+                }}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    if (!input.trim()) return;
+                    sendMessage({ text: input });
+                    setInput('');
+                    e.currentTarget.style.height = 'auto';
+                  }
+                }}
                 disabled={isLoading}
               />
               <button type="submit" title="Kirim pesan" aria-label="Kirim pesan"

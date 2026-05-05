@@ -10,7 +10,7 @@ const groq = createGroq({
   apiKey: process.env.GROQ_API_KEY,
 });
 
-const SIMILARITY_THRESHOLD = 0.5;
+const SIMILARITY_THRESHOLD = 0.65;
 
 export async function POST(req: Request) {
 
@@ -149,7 +149,10 @@ Jika jawabannya tidak ada di dalam konteks, katakan "Maaf, saya tidak memiliki i
 KONTEKS DOKUMEN:
 ${contextText}`;
   } else if (ragEnabled && !contextText) {
-    systemPrompt += `\n\nCatatan: Tidak ada dokumen relevan yang ditemukan untuk pertanyaan ini. Jawab berdasarkan pengetahuan umummu, tapi informasikan bahwa jawaban tidak berasal dari dokumen.`;
+    systemPrompt += `\n\nPENTING - ATURAN MENJAWAB:
+    Tidak ada dokumen yang relevan untuk pertanyaan ini. Kamu WAJIB menolak menjawab.
+    Balas persis seperti ini: "Maaf, saya tidak menemukan informasi mengenai hal tersebut di dalam database dokumen perusahaan." 
+    JANGAN PERNAH mencoba menjawab berdasarkan pengetahuan umum.`;
   }
 
   const result = streamText({
