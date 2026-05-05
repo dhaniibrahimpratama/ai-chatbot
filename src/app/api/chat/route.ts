@@ -151,7 +151,7 @@ ${contextText}`;
   } else if (ragEnabled && !contextText) {
     systemPrompt += `\n\nPENTING - ATURAN MENJAWAB:
     Tidak ada dokumen yang relevan untuk pertanyaan ini. Kamu WAJIB menolak menjawab.
-    Balas persis seperti ini: "Maaf, saya tidak menemukan informasi mengenai hal tersebut di dalam database dokumen perusahaan." 
+    Balas persis seperti ini: "Maaf, saya tidak menemukan informasi mengenai hal tersebut di dalam database." 
     JANGAN PERNAH mencoba menjawab berdasarkan pengetahuan umum.`;
   }
 
